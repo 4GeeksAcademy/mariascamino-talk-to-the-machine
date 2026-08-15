@@ -1,7 +1,7 @@
 "use client"
 
-import { ArrowDownToLine, ArrowUpFromLine, Coins, Gauge } from "lucide-react"
-import { MODELS, costForMessage, type Conversation } from "@/lib/chat-data"
+import { ArrowDownToLine, ArrowUpFromLine, Clock, Coins, Gauge, Zap } from "lucide-react"
+import { MODELS, costForUsage, type Conversation } from "@/lib/chat-data"
 
 function StatCard({
   icon,
@@ -28,23 +28,17 @@ function StatCard({
 
 export function TokenStats({ conversation }: { conversation: Conversation }) {
   const model = MODELS[conversation.model]
+  const { usage, lastCall } = conversation
 
-  const promptTokens = conversation.messages.reduce((sum, m) => sum + m.promptTokens, 0)
-  const completionTokens = conversation.messages.reduce((sum, m) => sum + m.completionTokens, 0)
-  const totalTokens = promptTokens + completionTokens
+  const totalCost = costForUsage(usage, model)
 
-  const totalCost = conversation.messages.reduce((sum, m) => sum + costForMessage(m, model), 0)
-
-  const contextUsed = conversation.messages.length
-    ? Math.max(
-        ...conversation.messages.map((m) => m.promptTokens + m.completionTokens),
-        conversation.messages[conversation.messages.length - 1]?.promptTokens ?? 0,
-      )
-    : 0
+  // Current context size = the last API call's prompt + completion tokens
+  // (that call already included the full history up to that point).
+  const contextUsed = lastCall ? lastCall.promptTokens + lastCall.completionTokens : 0
   const contextPct = Math.min(100, (contextUsed / model.contextWindow) * 100)
 
-  const promptPct = totalTokens ? (promptTokens / totalTokens) * 100 : 0
-  const completionPct = totalTokens ? (completionTokens / totalTokens) * 100 : 0
+  const promptPct = usage.totalTokens ? (usage.promptTokens / usage.totalTokens) * 100 : 0
+  const completionPct = usage.totalTokens ? (usage.completionTokens / usage.totalTokens) * 100 : 0
 
   const exchanges = conversation.messages.filter((m) => m.role === "assistant").length
 
@@ -61,15 +55,13 @@ export function TokenStats({ conversation }: { conversation: Conversation }) {
       </div>
 
       <div className="space-y-5 px-5 py-5">
-        {/* Total tokens hero */}
         <div>
           <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Total tokens
           </p>
           <p className="mt-1 font-mono text-4xl font-semibold tabular-nums text-foreground">
-            {totalTokens.toLocaleString()}
+            {usage.totalTokens.toLocaleString()}
           </p>
-          {/* Split bar: prompt vs completion */}
           <div className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-muted">
             <div
               className="h-full bg-chart-1 transition-all duration-500"
@@ -94,19 +86,31 @@ export function TokenStats({ conversation }: { conversation: Conversation }) {
           </div>
         </div>
 
-        {/* Breakdown cards */}
         <div className="grid grid-cols-2 gap-2.5">
           <StatCard
             icon={<ArrowUpFromLine className="size-3.5" aria-hidden="true" />}
             label="Prompt"
-            value={promptTokens.toLocaleString()}
+            value={usage.promptTokens.toLocaleString()}
             sub={`$${model.inputPrice}/M`}
           />
           <StatCard
             icon={<ArrowDownToLine className="size-3.5" aria-hidden="true" />}
             label="Completion"
-            value={completionTokens.toLocaleString()}
+            value={usage.completionTokens.toLocaleString()}
             sub={`$${model.outputPrice}/M`}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          <StatCard
+            icon={<Clock className="size-3.5" aria-hidden="true" />}
+            label="Response time"
+            value={lastCall ? `${Math.round(lastCall.responseTimeMs)} ms` : "—"}
+          />
+          <StatCard
+            icon={<Zap className="size-3.5" aria-hidden="true" />}
+            label="Tokens / sec"
+            value={lastCall ? lastCall.tokensPerSecond.toFixed(1) : "—"}
           />
         </div>
 
@@ -114,23 +118,22 @@ export function TokenStats({ conversation }: { conversation: Conversation }) {
           icon={<Coins className="size-3.5" aria-hidden="true" />}
           label="Estimated cost"
           value={`$${totalCost.toFixed(4)}`}
-          sub={`${MODELS[conversation.model].label} pricing`}
+          sub={`${model.label} pricing`}
         />
 
-        {/* Context window meter */}
         <div className="rounded-lg border border-border bg-card p-3.5">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               Context window
             </span>
             <span className="font-mono text-[11px] text-muted-foreground">
-              {contextPct < 1 ? "<1" : Math.round(contextPct)}%
+              {contextPct > 0 && contextPct < 1 ? "<1" : Math.round(contextPct)}%
             </span>
           </div>
           <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
             <div
               className="h-full rounded-full bg-primary transition-all duration-500"
-              style={{ width: `${Math.max(contextPct, 1.5)}%` }}
+              style={{ width: `${contextUsed ? Math.max(contextPct, 1.5) : 0}%` }}
               aria-hidden="true"
             />
           </div>
@@ -139,7 +142,6 @@ export function TokenStats({ conversation }: { conversation: Conversation }) {
           </p>
         </div>
 
-        {/* Per-message log */}
         <div>
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Per-message log
